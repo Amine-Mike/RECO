@@ -5,5 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "torch>=2.9.1",
+    "ffmpeg<8",
+    "numpy>=2.3.5",
+    "pandas>=2.3.3",
+    "soundfile>=0.13.1",
+    "torch==2.8.0",
+    "torchaudio>=2.8.0",
+    "torchcodec==0.7.0",
 ]
