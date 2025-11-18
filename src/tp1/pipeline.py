@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 import torchaudio
+import torch.nn.functional as F
 
 from data import Data
 from model import MLP
@@ -28,13 +29,28 @@ class Pipeline:
         self.metadata_path = self.path / Path(metadata)
         self.df_metadata = pd.read_csv(str(self.metadata_path), sep="|", header=None)
         self._input_size = 23
+        self.model = None
 
     CHARS = "abcdefghijklmnopqrstuvwxyz'?! "
     char_to_idx = {char: i + 1 for i, char in enumerate(CHARS)}
     idx_to_char = {i + 1: char for i, char in enumerate(CHARS)}
 
     def encode_transcription(self, msg: str) -> torch.Tensor:
-        return torch.tensor([self.char_to_idx.get(c, 0) for c in msg.lower()])
+        encoded = []
+        for c in msg.lower():
+            if c in self.char_to_idx:
+                idx = self.char_to_idx[c]
+                # 2. CRITICAL SECURITY CHECK:
+                # If the index is 0, SKIP IT. 0 is reserved for CTC Blank.
+                if idx != 0:
+                    encoded.append(idx)
+
+        # If the label ended up empty (e.g. only special chars), return a placeholder
+        if len(encoded) == 0:
+            # Return a placeholder to prevent crash, but this file should be skipped
+            return torch.tensor([1], dtype=torch.long)
+
+        return torch.tensor(encoded, dtype=torch.long)
 
     def fill_mfccs(self):
         i = 1
@@ -86,6 +102,66 @@ class Pipeline:
         plt.colorbar()
         plt.show()
 
+    def decode_prediction(self, output: torch.Tensor) -> str:
+        """
+        Decodes the model output (logits) into a string using Greedy Decoding.
+        1. Get argmax (most likely char) for each time step.
+        2. Collapse repeated characters.
+        3. Drop Blank tokens (Index 0).
+        """
+        # output shape: [Time, 1, Classes] -> squeeze to [Time, Classes]
+        output = output.squeeze(1)
+
+        # Get the index of the highest probability character at each step
+        arg_maxes = torch.argmax(output, dim=1)
+
+        decoded_str = []
+        last_idx = -1  # To track repeats
+
+        for idx in arg_maxes:
+            idx = idx.item()
+
+            # CTC Logic:
+            # 1. If it is the Blank Token (0), ignore it.
+            # 2. If it is the same as the previous token, ignore it (merge repeats).
+            if idx != 0 and idx != last_idx:
+                char = self.idx_to_char.get(idx, "")
+                decoded_str.append(char)
+
+            last_idx = idx
+
+        return "".join(decoded_str)
+
+    def inference(self, wav_path: str) -> str:
+        self.model.eval()
+
+        waveform, sample_rate = torchaudio.load(wav_path, normalize=True)
+
+        transform = transforms.MFCC(
+            sample_rate=sample_rate,
+            n_mfcc=23,  # Must match training
+            melkwargs={
+                "n_fft": 400,
+                "hop_length": 160,
+                "n_mels": 23,
+                "center": False,
+            },
+        )
+
+        mfcc = transform(waveform)
+
+        input_to_mlp = mfcc.permute(0, 2, 1).squeeze(0)  # [Time, 23]
+
+        with torch.no_grad():
+            preds = self.model(input_to_mlp)  # [Time, Classes]
+            preds = F.log_softmax(preds, dim=1)
+            preds = preds.unsqueeze(1)  # [Time, 1, Classes] for consistency
+
+        transcript = self.decode_prediction(preds)
+        print(f"File: {Path(wav_path).name}")
+        print(f"Prediction: {transcript}")
+        return transcript
+
     def train_model(self):
         hidden_size = 32
 
@@ -93,16 +169,16 @@ class Pipeline:
             input_size=self._input_size,
             hidden_size=hidden_size,
             output_size=len(self.CHARS),
-            n_layers=24,
+            n_layers=2,
         )
+        self.model = model
         loss_fn = torch.nn.CTCLoss(blank=0, zero_infinity=True)
         optim = torch.optim.Adam(model.parameters(), lr=3e-4)
         EPOCHS = 10
-
+        torch.manual_seed(9450608950885875555)
         for epoch in range(0, EPOCHS):
             total_loss = 0
             print(f"Epoch {epoch + 1} / {EPOCHS}")
-
             for data in self.s_mfcc.values():
                 mfcc = data.mfcc
                 optim.zero_grad()
@@ -110,6 +186,10 @@ class Pipeline:
 
                 preds = model(input_to_mlp)
                 preds = preds.unsqueeze(1)
+
+                raw_indices = torch.argmax(preds, dim=2)
+                print(f"Raw Indices: {raw_indices[0, :20]}")
+
                 seq_len = preds.size(0)
 
                 input_lengths = torch.full(
@@ -122,8 +202,11 @@ class Pipeline:
 
                 total_loss += loss.item()
                 optim.step()
+                if epoch == EPOCHS - 1:
+                    print(f"Sample Prediction: {self.decode_prediction(preds)}")
 
             avg_loss = total_loss / len(self.s_mfcc)
+
             print(f"Average Loss: {avg_loss:.4f}")
 
     def launch_pipeline(self):
