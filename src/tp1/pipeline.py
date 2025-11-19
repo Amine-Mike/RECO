@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torchaudio
 
 from MLP.model import MLP
+from CNN.model import CNN
 from MLP.data import Data
 
 warnings.filterwarnings(
@@ -26,7 +27,8 @@ class Pipeline:
     ):
         self.path = Path(path)
         self.folder = self.path / Path("wavs")
-        self.s_mfcc = {}
+        self.s_rpr = {}  # Dictionary in which the keys -> Audio File name, values -> Data Type
+        self.spectrograms = {}  # Dictionary in which the keys -> Audio File name, values -> Data Type
         self.metadata_path = self.path / Path(metadata)
         self.df_metadata = pd.read_csv(str(self.metadata_path), sep="|", header=None)
         self._input_size = 23
@@ -49,7 +51,29 @@ class Pipeline:
 
         return torch.tensor(encoded, dtype=torch.long)
 
-    def fill_mfccs(self):
+    def fill_spectrograms(self):
+        """
+        Create the spectrograms from a .wav file (Raw Audio), and the fill
+        the dictionary for later usage
+        """
+        i = 0
+        for file_path in self.folder.glod("*.wav"):
+            waveform, sample_rate = torchaudio.load(file_path, normalize=True)
+
+            mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sample_rate, n_fft=400, hop_length=160, n_mels=128
+            )
+            db_transform = torchaudio.transforms.AmplitudeToDB()
+
+            mel_spectrogram = mel_spectrogram_transform(waveform)
+            mel_spec_db = db_transform(mel_spectrogram)
+
+            self.spectrograms[file_path.stem] = Data(None, mel_spec_db)
+            if i % 1000 == 0:
+                break
+            i += 1
+
+    def fill_rprs(self):
         i = 0
         max_length = 0
         for file_path in self.folder.glob("*.wav"):
@@ -65,24 +89,24 @@ class Pipeline:
                 },
             )
 
-            mfcc = transform(waveform)
-            max_length = max(max_length, mfcc.shape[2])
+            rpr = transform(waveform)
+            max_length = max(max_length, rpr.shape[2])
 
-            self.s_mfcc[file_path.stem] = Data(
+            self.s_rpr[file_path.stem] = Data(
                 self.encode_transcription(
                     self.df_metadata[self.df_metadata[0] == file_path.stem][1].iloc[0]
                 ),
-                mfcc,
+                rpr,
             )
             i += 1
             if i % 1000 == 0:
                 break
 
-        for _, value in self.s_mfcc.items():
-            seq = value.mfcc
+        for _, value in self.s_rpr.items():
+            seq = value.rpr
             pad_size = max_length - seq.shape[2]
 
-            value.mfcc = torch.nn.functional.pad(
+            value.rpr = torch.nn.functional.pad(
                 seq, (0, pad_size), mode="constant", value=0
             )
 
@@ -142,9 +166,9 @@ class Pipeline:
             },
         )
 
-        mfcc = transform(waveform)
+        rpr = transform(waveform)
 
-        input_to_mlp = mfcc.permute(0, 2, 1).squeeze(0)  # [Time, 23]
+        input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)  # [Time, 23]
 
         with torch.no_grad():
             preds = self.model(input_to_mlp)  # [Time, Classes]
@@ -164,13 +188,13 @@ class Pipeline:
         for epoch in range(0, EPOCHS):
             total_loss = 0
             print(f"Epoch {epoch + 1} / {EPOCHS}")
-            for data in self.s_mfcc.values():
-                mfcc = data.mfcc
+            for data in self.s_rpr.values():
+                rpr = data.rpr
                 optim.zero_grad()
-                input_to_mlp = mfcc.permute(0, 2, 1).squeeze(0)
+                # input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)
 
-                preds = self.model(input_to_mlp)
-                preds = preds.unsqueeze(1)
+                preds = self.model(rpr)
+                # preds = preds.unsqueeze(1)
 
                 seq_len = preds.size(0)
 
@@ -187,20 +211,20 @@ class Pipeline:
                 if epoch == EPOCHS - 1:
                     sample_answer += self.decode_prediction(preds)
 
-            avg_loss = total_loss / len(self.s_mfcc)
+            avg_loss = total_loss / len(self.s_rpr)
 
             print(f"Average Loss: {avg_loss:.4f}")
         print(f"Sample Prediction: {sample_answer}")
 
     def launch_pipeline(self):
-        self.fill_mfccs()
+        self.fill_rprs()
 
-        if len(self.s_mfcc.keys()) == 0:
+        if len(self.s_rpr.keys()) == 0:
             raise ValueError(
-                "Error while filling the mfccs, make sure that the given path contains .wav files"
+                "Error while filling the rprs, make sure that the given path contains .wav files"
             )
 
-        # self.visualize_data(list(self.s_mfcc.values())[0].mfcc)
+        # self.visualize_data(list(self.s_rpr.values())[0].rpr)
 
         self.train_model()
 
@@ -217,5 +241,11 @@ if __name__ == "__main__":
         output_size=OUTPUT_SIZE,
         n_layers=N_LAYERS,
     )
-    pipeline = Pipeline(model)
+    lstm_model = CNN(
+        input_chanels=1,
+        output_channels=64,
+        input_size=128,
+        hidden_size=32,
+    )
+    pipeline = Pipeline(lstm_model)
     pipeline.launch_pipeline()

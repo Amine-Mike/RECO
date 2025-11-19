@@ -1,4 +1,4 @@
 class Data:
-    def __init__(self, label, mfcc):
+    def __init__(self, label, rpr):
         self.label = label
-        self.mfcc = mfcc
+        self.rpr = rpr
