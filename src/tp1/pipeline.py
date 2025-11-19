@@ -6,11 +6,11 @@ from torchaudio import transforms
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
-import torchaudio
 import torch.nn.functional as F
+import torchaudio
 
-from data import Data
-from model import MLP
+from MLP.model import MLP
+from MLP.data import Data
 
 warnings.filterwarnings(
     "ignore", message="In 2.9, this function's implementation will be changed"
@@ -20,6 +20,7 @@ warnings.filterwarnings(
 class Pipeline:
     def __init__(
         self,
+        model: torch.nn.Module,
         path: str = "data/LJSpeech-1.1",
         metadata: Optional[str] = "metadata.csv",
     ):
@@ -29,9 +30,9 @@ class Pipeline:
         self.metadata_path = self.path / Path(metadata)
         self.df_metadata = pd.read_csv(str(self.metadata_path), sep="|", header=None)
         self._input_size = 23
-        self.model = None
+        self.model = model
 
-    CHARS = "abcdefghijklmnopqrstuvwxyz'?! "
+    CHARS = "abcdefghijklmnopqrstuvwxyz "
     char_to_idx = {char: i + 1 for i, char in enumerate(CHARS)}
     idx_to_char = {i + 1: char for i, char in enumerate(CHARS)}
 
@@ -40,20 +41,16 @@ class Pipeline:
         for c in msg.lower():
             if c in self.char_to_idx:
                 idx = self.char_to_idx[c]
-                # 2. CRITICAL SECURITY CHECK:
-                # If the index is 0, SKIP IT. 0 is reserved for CTC Blank.
                 if idx != 0:
                     encoded.append(idx)
 
-        # If the label ended up empty (e.g. only special chars), return a placeholder
         if len(encoded) == 0:
-            # Return a placeholder to prevent crash, but this file should be skipped
             return torch.tensor([1], dtype=torch.long)
 
         return torch.tensor(encoded, dtype=torch.long)
 
     def fill_mfccs(self):
-        i = 1
+        i = 0
         max_length = 0
         for file_path in self.folder.glob("*.wav"):
             waveform, sample_rate = torchaudio.load(file_path, normalize=True)
@@ -78,7 +75,7 @@ class Pipeline:
                 mfcc,
             )
             i += 1
-            if i % 100 == 0:
+            if i % 1000 == 0:
                 break
 
         for _, value in self.s_mfcc.items():
@@ -121,9 +118,6 @@ class Pipeline:
         for idx in arg_maxes:
             idx = idx.item()
 
-            # CTC Logic:
-            # 1. If it is the Blank Token (0), ignore it.
-            # 2. If it is the same as the previous token, ignore it (merge repeats).
             if idx != 0 and idx != last_idx:
                 char = self.idx_to_char.get(idx, "")
                 decoded_str.append(char)
@@ -163,19 +157,10 @@ class Pipeline:
         return transcript
 
     def train_model(self):
-        hidden_size = 32
-
-        model = MLP(
-            input_size=self._input_size,
-            hidden_size=hidden_size,
-            output_size=len(self.CHARS),
-            n_layers=2,
-        )
-        self.model = model
         loss_fn = torch.nn.CTCLoss(blank=0, zero_infinity=True)
-        optim = torch.optim.Adam(model.parameters(), lr=3e-4)
+        optim = torch.optim.Adam(self.model.parameters(), lr=3e-4)
         EPOCHS = 10
-        torch.manual_seed(9450608950885875555)
+        sample_answer = ""
         for epoch in range(0, EPOCHS):
             total_loss = 0
             print(f"Epoch {epoch + 1} / {EPOCHS}")
@@ -184,11 +169,8 @@ class Pipeline:
                 optim.zero_grad()
                 input_to_mlp = mfcc.permute(0, 2, 1).squeeze(0)
 
-                preds = model(input_to_mlp)
+                preds = self.model(input_to_mlp)
                 preds = preds.unsqueeze(1)
-
-                raw_indices = torch.argmax(preds, dim=2)
-                print(f"Raw Indices: {raw_indices[0, :20]}")
 
                 seq_len = preds.size(0)
 
@@ -203,11 +185,12 @@ class Pipeline:
                 total_loss += loss.item()
                 optim.step()
                 if epoch == EPOCHS - 1:
-                    print(f"Sample Prediction: {self.decode_prediction(preds)}")
+                    sample_answer += self.decode_prediction(preds)
 
             avg_loss = total_loss / len(self.s_mfcc)
 
             print(f"Average Loss: {avg_loss:.4f}")
+        print(f"Sample Prediction: {sample_answer}")
 
     def launch_pipeline(self):
         self.fill_mfccs()
@@ -223,5 +206,16 @@ class Pipeline:
 
 
 if __name__ == "__main__":
-    pipeline = Pipeline()
+    torch.manual_seed(42)
+    INPUT_SIZE = 23
+    HIDDEN_SIZE = 32
+    OUTPUT_SIZE = 27
+    N_LAYERS = 2
+    model = MLP(
+        input_size=INPUT_SIZE,
+        hidden_size=HIDDEN_SIZE,
+        output_size=OUTPUT_SIZE,
+        n_layers=N_LAYERS,
+    )
+    pipeline = Pipeline(model)
     pipeline.launch_pipeline()
