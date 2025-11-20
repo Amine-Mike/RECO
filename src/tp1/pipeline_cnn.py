@@ -4,7 +4,6 @@ import torch
 import torchaudio
 
 from CNN.model import CNN
-from MLP.data import Data
 from pipeline_common import (
     fill_rprs_from_folder,
     CHARS,
@@ -30,7 +29,9 @@ class CNNPipeline:
         self.repr_n_mels = repr_n_mels
         self.max_samples = max_samples
         self.device = (
-            device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device
+            if device is not None
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.s_rpr = {}
         self.expected_output_size = len(CHARS) + 1
@@ -38,8 +39,12 @@ class CNNPipeline:
     def fill_rprs(self):
         print(f"Loading audio files (max_samples={self.max_samples})...")
         self.s_rpr = fill_rprs_from_folder(
-            self.folder, self.metadata, repr_type=self.repr_type, repr_n_mels=self.repr_n_mels,
-            max_samples=self.max_samples, pad_sequences=False
+            self.folder,
+            self.metadata,
+            repr_type=self.repr_type,
+            repr_n_mels=self.repr_n_mels,
+            max_samples=self.max_samples,
+            pad_sequences=False,
         )
         print(f"Loaded {len(self.s_rpr)} samples")
 
@@ -89,7 +94,7 @@ class CNNPipeline:
             print(f"Epoch {epoch}/{epochs}")
             self.model.train()
             total_loss = 0.0
-            for i, data in enumerate(self.s_rpr.values()):
+            for _, data in enumerate(self.s_rpr.values()):
                 rpr = data.rpr.to(self.device)
                 label = data.label.to(self.device)
 
@@ -101,8 +106,12 @@ class CNNPipeline:
 
                 preds = self.model(rpr)  # [time, batch, classes]
 
-                input_lengths = torch.tensor([preds.size(0)], dtype=torch.long, device=self.device)
-                target_lengths = torch.tensor([label.size(0)], dtype=torch.long, device=self.device)
+                input_lengths = torch.tensor(
+                    [preds.size(0)], dtype=torch.long, device=self.device
+                )
+                target_lengths = torch.tensor(
+                    [label.size(0)], dtype=torch.long, device=self.device
+                )
 
                 opt.zero_grad()
                 loss = loss_fn(preds, label, input_lengths, target_lengths)
@@ -124,9 +133,6 @@ class CNNPipeline:
             except StopIteration:
                 pass
 
-                if (i + 1) % 10 == 0:
-                    print(f"  Processed {i+1}/{len(self.s_rpr)} samples, loss={loss.item():.4f}")
-
             avg = total_loss / len(self.s_rpr) if len(self.s_rpr) else 0
             print(f"Avg loss: {avg:.4f}")
 
@@ -134,17 +140,27 @@ class CNNPipeline:
         self.fill_rprs()
         if len(self.s_rpr) == 0:
             raise RuntimeError("No wav files were found in the provided folder")
-        self.train_model()
+        self.train_model(epochs=10)
 
 
 if __name__ == "__main__":
-    import torch
-
     INPUT_SIZE = 128
     HIDDEN_SIZE = 128
     OUTPUT_SIZE = len(CHARS) + 1
-
-    model = CNN(input_chanels=1, output_channels=64, input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE, n_classes=OUTPUT_SIZE)
-    pipeline = CNNPipeline(model, repr_type="mel", repr_n_mels=INPUT_SIZE, folder="data/LJSpeech-1.1/wavs")
-    print("Launching CNN pipeline")
+    MODEL_TYPE = "GRU"
+    model = CNN(
+        input_chanels=1,
+        output_channels=64,
+        input_size=INPUT_SIZE,
+        hidden_size=HIDDEN_SIZE,
+        n_classes=OUTPUT_SIZE,
+        model_type=MODEL_TYPE,
+    )
+    pipeline = CNNPipeline(
+        model,
+        repr_type="mel",
+        repr_n_mels=INPUT_SIZE,
+        folder="data/LJSpeech-1.1/wavs",
+    )
+    print(f"Launching CNN pipeline with model type: {MODEL_TYPE}")
     pipeline.launch_pipeline()

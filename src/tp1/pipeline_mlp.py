@@ -1,16 +1,12 @@
-from pathlib import Path
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 import torchaudio
 
 from MLP.model import MLP
-from MLP.data import Data
 from pipeline_common import (
     fill_rprs_from_folder,
     CHARS,
-    encode_transcription,
     decode_prediction,
 )
 
@@ -33,7 +29,9 @@ class MLPPipeline:
         self.repr_n_mels = repr_n_mels
         self.max_samples = max_samples
         self.device = (
-            device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device
+            if device is not None
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.s_rpr = {}
 
@@ -43,8 +41,12 @@ class MLPPipeline:
     def fill_rprs(self) -> None:
         print(f"Loading audio files (max_samples={self.max_samples})...")
         self.s_rpr = fill_rprs_from_folder(
-            self.folder, self.metadata, repr_type=self.repr_type, repr_n_mels=self.repr_n_mels,
-            max_samples=self.max_samples, pad_sequences=True
+            self.folder,
+            self.metadata,
+            repr_type=self.repr_type,
+            repr_n_mels=self.repr_n_mels,
+            max_samples=self.max_samples,
+            pad_sequences=True,
         )
         print(f"Loaded {len(self.s_rpr)} samples")
 
@@ -87,10 +89,8 @@ class MLPPipeline:
 
     def train_model(self, epochs: int = 20, lr: float = 3e-4):
         print(f"Starting training on {self.device} Device")
-        # set device
         self.model.to(self.device)
 
-        # Ensure model's input size matches repr
         first_linear = None
         for m in self.model.modules():
             if isinstance(m, torch.nn.Linear):
@@ -101,7 +101,8 @@ class MLPPipeline:
 
         if first_linear.in_features != self.repr_n_mels:
             raise ValueError(
-                f"MLP's first Linear expects {first_linear.in_features} features but repr_n_mels={self.repr_n_mels}"
+                f"MLP's first Linear expects {first_linear.in_features} features "
+                f"but repr_n_mels={self.repr_n_mels}"
             )
 
         opt = torch.optim.Adam(self.model.parameters(), lr=lr)
@@ -115,13 +116,17 @@ class MLPPipeline:
                 rpr = data.rpr.to(self.device)
                 label = data.label.to(self.device)
 
-                # permute to [time, features]
+                # permute to [time, features] fuck les permute
                 input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)
                 preds = self.model(input_to_mlp)  # [time, classes]
                 preds = preds.unsqueeze(1)  # [time, batch, classes]
 
-                input_lengths = torch.tensor([preds.size(0)], dtype=torch.long, device=self.device)
-                target_lengths = torch.tensor([label.size(0)], dtype=torch.long, device=self.device)
+                input_lengths = torch.tensor(
+                    [preds.size(0)], dtype=torch.long, device=self.device
+                )
+                target_lengths = torch.tensor(
+                    [label.size(0)], dtype=torch.long, device=self.device
+                )
 
                 opt.zero_grad()
                 loss = loss_fn(preds, label, input_lengths, target_lengths)
@@ -130,15 +135,17 @@ class MLPPipeline:
                 opt.step()
 
                 total_loss += loss.item()
-                
+
                 if (i + 1) % 10 == 0:
-                    print(f"  Processed {i+1}/{len(self.s_rpr)} samples, loss={loss.item():.4f}")
+                    print(
+                        f"  Processed {i + 1}/{len(self.s_rpr)} samples, loss={loss.item():.4f}"
+                    )
 
             try:
                 first_key = next(iter(self.s_rpr))
                 print("Sanity check inference on sample:", first_key)
                 sample_rpr = self.s_rpr[first_key].rpr.to(self.device)
-                
+
                 self.model.eval()
                 with torch.no_grad():
                     # permute to [time, features] for MLP
@@ -163,15 +170,22 @@ class MLPPipeline:
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    import torch
-
     INPUT_SIZE = 23
     HIDDEN_SIZE = 32
     OUTPUT_SIZE = len(CHARS) + 1
     N_LAYERS = 2
 
-    mlp_model = MLP(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE, output_size=OUTPUT_SIZE, n_layers=N_LAYERS)
-    pipeline = MLPPipeline(mlp_model, repr_type="mfcc", repr_n_mels=INPUT_SIZE, folder="data/LJSpeech-1.1/wavs")
+    mlp_model = MLP(
+        input_size=INPUT_SIZE,
+        hidden_size=HIDDEN_SIZE,
+        output_size=OUTPUT_SIZE,
+        n_layers=N_LAYERS,
+    )
+    pipeline = MLPPipeline(
+        mlp_model,
+        repr_type="mfcc",
+        repr_n_mels=INPUT_SIZE,
+        folder="data/LJSpeech-1.1/wavs",
+    )
     print("Launching MLP pipeline")
     pipeline.launch_pipeline()

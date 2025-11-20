@@ -187,7 +187,7 @@ class Pipeline:
                 },
             )
             rpr = transform(waveform)
-            
+
             rpr = rpr.to(self.device)
         else:
             mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
@@ -220,7 +220,7 @@ class Pipeline:
         for epoch in range(0, EPOCHS):
             total_loss = 0
             print(f"Epoch {epoch + 1} / {EPOCHS}")
-            for i, data in enumerate(self.s_rpr.values()):
+            for _, data in enumerate(self.s_rpr.values()):
                 rpr = data.rpr.to(self.device)
                 optim.zero_grad()
                 # If model is MLP it expects [seq_len, features], not [1, channels, features, time]
@@ -239,7 +239,6 @@ class Pipeline:
 
                 preds = self.model(rpr)
                 # preds = preds.unsqueeze(1)
-                
 
                 seq_len = preds.size(0)
 
@@ -252,7 +251,7 @@ class Pipeline:
                 label = data.label.to(self.device)
                 loss = loss_fn(preds, label, input_lengths, target_lengths)
                 loss.backward()
-                
+
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
 
                 total_loss += loss.item()

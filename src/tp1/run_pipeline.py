@@ -5,6 +5,9 @@ from MLP.model import MLP
 from CNN.model import CNN
 from pipeline_mlp import MLPPipeline
 from pipeline_cnn import CNNPipeline
+from benchmarker import PipelineBenchmarker
+
+OUTPUT_SIZE = len("abcdefghijklmnopqrstuvwxyz ") + 1
 
 
 def main():
@@ -14,28 +17,59 @@ def main():
     args = parser.parse_args()
 
     device = (
-        torch.device(args.device) if args.device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch.device(args.device)
+        if args.device is not None
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     )
 
     if args.mode == "mlp":
         print(f"Model chosen MLP on device {device}")
-        INPUT_SIZE = 23
-        HIDDEN_SIZE = 32
-        OUTPUT_SIZE = len("abcdefghijklmnopqrstuvwxyz ") + 1
-        N_LAYERS = 2
-        mlp_model = MLP(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE, output_size=OUTPUT_SIZE, n_layers=N_LAYERS)
-        pipeline = MLPPipeline(mlp_model, repr_type="mfcc", repr_n_mels=INPUT_SIZE, device=device, max_samples=100)
+        input_size = 23
+        hidden_size = 32
+        n_layers = 2
+        max_samples = 100
+        mlp_model = MLP(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            output_size=OUTPUT_SIZE,
+            n_layers=n_layers,
+        )
+        pipeline = MLPPipeline(
+            mlp_model,
+            repr_type="mfcc",
+            repr_n_mels=input_size,
+            device=device,
+            max_samples=max_samples,
+        )
         print("Starting MLP pipeline...")
         pipeline.launch_pipeline()
     else:
         print(f"Model chosen CNN on device {device}")
-        INPUT_SIZE = 128
-        HIDDEN_SIZE = 128
-        OUTPUT_SIZE = len("abcdefghijklmnopqrstuvwxyz ") + 1
-        model = CNN(input_chanels=1, output_channels=64, input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE, n_classes=OUTPUT_SIZE)
-        pipeline = CNNPipeline(model, repr_type="mel", repr_n_mels=INPUT_SIZE, device=device, max_samples=100)
+        input_channels = 1
+        output_channels = 64
+        input_size = 128
+        hidden_size = 128
+        max_samples = 100
+        model_type = "BI-LSTM"  # Options: "LSTM", "BI-LSTM", "GRU"
+        print(f"Preparing CNN model... with {model_type} predicition head")
+        model = CNN(
+            input_chanels=input_channels,
+            output_channels=output_channels,
+            input_size=input_size,
+            hidden_size=hidden_size,
+            n_classes=OUTPUT_SIZE,
+            model_type=model_type,
+        )
+        pipeline = CNNPipeline(
+            model,
+            repr_type="mel",
+            repr_n_mels=input_size,
+            device=device,
+            max_samples=max_samples,
+        )
         print("Starting CNN pipeline...")
-        pipeline.launch_pipeline()
+        benchmark = PipelineBenchmarker(pipeline.launch_pipeline)
+        benchmark.time_execution()
 
 
 if __name__ == "__main__":

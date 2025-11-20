@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import Dict, Tuple, Callable, Optional
+from typing import Dict, Callable, Optional
 import warnings
+import pandas as pd
 
 import torch
 import torchaudio
@@ -8,8 +9,7 @@ from torchaudio import transforms
 
 from MLP.data import Data
 
-# Suppress torchaudio deprecation warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='torchaudio')
+warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
 
 
 CHARS = "abcdefghijklmnopqrstuvwxyz "
@@ -91,8 +91,6 @@ def fill_rprs_from_folder(
     metadata_path = Path(metadata_path)
     df_metadata = None
     if metadata_path.exists():
-        import pandas as pd
-
         df_metadata = pd.read_csv(str(metadata_path), sep="|", header=None)
 
     s_rpr = {}
@@ -121,7 +119,7 @@ def fill_rprs_from_folder(
             try:
                 label = df_metadata[df_metadata[0] == file_path.stem][1].iloc[0]
                 label_tensor = encode_transcription(label)
-            except Exception:
+            except (KeyError, IndexError):
                 label_tensor = torch.tensor([1], dtype=torch.long)
 
         s_rpr[file_path.stem] = Data(label_tensor, rpr)
@@ -130,14 +128,17 @@ def fill_rprs_from_folder(
         if max_samples is not None and i >= max_samples:
             break
 
-    # Pad sequences only if requested (for MLP)
     if pad_sequences:
-        print(f"\n  Padding sequences to max_length={max_length} (for MLP fixed-size input)...")
+        print(
+            f"\n  Padding sequences to max_length={max_length} (for MLP fixed-size input)..."
+        )
         for _, value in s_rpr.items():
             seq = value.rpr
             pad_size = max_length - seq.shape[2]
             if pad_size > 0:
-                value.rpr = torch.nn.functional.pad(seq, (0, pad_size), mode="constant", value=0)
+                value.rpr = torch.nn.functional.pad(
+                    seq, (0, pad_size), mode="constant", value=0
+                )
     else:
         print(f"\n  Loaded {len(s_rpr)} samples (variable lengths for CNN+LSTM)")
 

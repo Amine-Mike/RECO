@@ -10,6 +10,7 @@ class CNN(nn.Module):
         input_size: int,
         hidden_size: int,
         n_classes: int = 27,
+        model_type: str = "LSTM",  # "LSTM", "BI-LSTM" or "GRU"
     ):
         super().__init__()
         self.conv_layer = nn.Sequential(
@@ -22,13 +23,15 @@ class CNN(nn.Module):
             ),
             nn.ReLU(),
             nn.BatchNorm2d(num_features=output_channels),
-            # We put 2 AvgPooling but we could also try only one to reduce the feature map too much and lose information
+            # We put 2 AvgPooling but we could also try only one to reduce the
+            # feature map too much and lose information
             nn.AvgPool2d(kernel_size=(2, 2)),
             nn.AvgPool2d(kernel_size=(2, 1)),
         )
 
         # I needed this part to compute the feature size after conv/pooling on height dimension
-        # We forward a dummy tensor to determine the output height, this just a dummy going inside my convolutions
+        # We forward a dummy tensor to determine the output height, this just a
+        # dummy going inside my convolutions
         with torch.no_grad():
             dummy_width = 8
             dummy = torch.zeros(1, input_chanels, input_size, dummy_width)
@@ -40,14 +43,35 @@ class CNN(nn.Module):
 
         lstm_input_size = out_ch * out_h
 
-        self.lstm = nn.LSTM(
-            input_size=lstm_input_size,
-            hidden_size=hidden_size,
-            bidirectional=True,
-        )
+        # Bidirectional LSTM
+        if model_type == "BI-LSTM":
+            self.lstm = nn.LSTM(
+                input_size=lstm_input_size,
+                hidden_size=hidden_size,
+                bidirectional=True,
+            )
+        # Standard LSTM
+        elif model_type == "LSTM":
+            self.lstm = nn.LSTM(
+                input_size=lstm_input_size,
+                hidden_size=hidden_size,
+                bidirectional=False,
+            )
+        # GRU
+        elif model_type == "GRU":
+            self.lstm = nn.GRU(
+                input_size=lstm_input_size,
+                hidden_size=hidden_size,
+                bidirectional=False,
+            )
+        else:
+            raise ValueError(f"Unknown model_type: {model_type}")
 
-        # Final projection from LSTM hidden to classes, the classes are all the letters of the alpahabet with the empty token and a blank space
-        self.fc = nn.Linear(hidden_size * 2, n_classes)
+        hidden_size = hidden_size * 2 if model_type == "BI-LSTM" else hidden_size
+
+        # Final projection from LSTM hidden to classes, the classes are all the
+        # letters of the alpahabet with the empty token and a blank space
+        self.fc = nn.Linear(hidden_size, n_classes)
         self.log_softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -71,15 +95,14 @@ class CNN(nn.Module):
         if x.dim() != 4:
             raise ValueError(f"CNN expects 4D input (batch, ch, H, W). Got: {x.dim()}D")
 
-        batch = x.shape[0]
-
         # The conv_layer will output a tensor of shape
         # (Batch_size, out_chanels, out_height, out_width)
         # How I see it:
         #       batch_size is just the size of the batch
         #       out_chanels : Number of output feature maps
         #       out_height : Height of the feature maps after the reduction from the AvgPooling
-        #       out_width : Width of the Feature maps ( Basically the lenght of the sequence super import for the LSTM )
+        #       out_width : Width of the Feature maps ( Basically the lenght of
+        #                   the sequence super import for the LSTM )
 
         x = self.conv_layer(x)  # (batch, out_ch, out_h, out_w)
 
@@ -87,14 +110,14 @@ class CNN(nn.Module):
         # The LSTM needs a 3D tensor but from the conv I get 4D tensor
         # From the dlstp I know that a LSTM needs a tensor of this shape
         # t = (Seq_len, Batch_size, Feature_size)
-        # I need to transform the tensor I got from the convlution then
+        # I need to transform the tensor I got from the convolution then
         # I need to permute the out_w is the seq_len
         # Permute to (width, batch, channels, height) and flatten channels*height
 
         x = x.permute(3, 0, 1, 2)  # (out_w, batch, out_ch, out_h)
-        seq_len, b, ch, h = x.size()
-        
-        # since I flatten the 3rd dim it will replace it with a dim that will be channels * out_h so basically my feature size
+
+        # since I flatten the 3rd dim it will replace it with a dim that will be
+        # channels * out_h so basically my feature size
         # I should have a ready tensor to go in the LSTM
         x = x.flatten(2)  # (out_w, batch, ch*out_h) the flatten is primordial
 
