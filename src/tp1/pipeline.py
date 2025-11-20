@@ -223,6 +223,18 @@ class Pipeline:
             for i, data in enumerate(self.s_rpr.values()):
                 rpr = data.rpr.to(self.device)
                 optim.zero_grad()
+                # If model is MLP it expects [seq_len, features], not [1, channels, features, time]
+                if isinstance(self.model, MLP):
+                    # MFCC / mel rpr shape: [1, n_mels, time]
+                    # Permute to [1, time, n_mels] then squeeze batch -> [time, n_mels]
+                    input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)
+                    input_to_mlp = input_to_mlp.to(self.device)
+                    preds = self.model(input_to_mlp)
+                    # preds shape: [time, classes], insert batch dim for CTCLoss
+                    preds = preds.unsqueeze(1)
+                else:
+                    # CNN model expects 4D or handles 3D -> [B, C, H, W]
+                    preds = self.model(rpr)
                 # input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)
 
                 preds = self.model(rpr)
@@ -293,7 +305,7 @@ if __name__ == "__main__":
         n_layers=N_LAYERS,
     )
     # If anyone wants to use MelSpectrogram, set repr_type='mel' and repr_n_mels=128
-    REPR_TYPE = "mel"
+    REPR_TYPE = "mfcc"
     REPR_N_MELS = 128
 
     lstm_model = CNN(
@@ -306,6 +318,6 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     pipeline = Pipeline(
-        lstm_model, repr_type=REPR_TYPE, repr_n_mels=REPR_N_MELS, device=device
+        model, repr_type=REPR_TYPE, repr_n_mels=REPR_N_MELS, device=device
     )
     pipeline.launch_pipeline()
