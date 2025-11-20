@@ -24,6 +24,9 @@ class Pipeline:
         model: torch.nn.Module,
         path: str = "data/LJSpeech-1.1",
         metadata: Optional[str] = "metadata.csv",
+        repr_type: str = "mfcc",
+        repr_n_mels: int = 23,
+        device: Optional[torch.device] = None,
     ):
         self.path = Path(path)
         self.folder = self.path / Path("wavs")
@@ -32,7 +35,17 @@ class Pipeline:
         self.metadata_path = self.path / Path(metadata)
         self.df_metadata = pd.read_csv(str(self.metadata_path), sep="|", header=None)
         self._input_size = 23
-        self.model = model
+        self.repr_type = repr_type
+        self.repr_n_mels = repr_n_mels
+        self.device = (
+            device
+            if device is not None
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        self.model = model.to(self.device)
+
+        # Expected number of classes = len(CHARS) + 1 (blank for CTC)
+        self.expected_output_size = len(self.CHARS) + 1
 
     CHARS = "abcdefghijklmnopqrstuvwxyz "
     char_to_idx = {char: i + 1 for i, char in enumerate(CHARS)}
@@ -56,8 +69,7 @@ class Pipeline:
         Create the spectrograms from a .wav file (Raw Audio), and the fill
         the dictionary for later usage
         """
-        i = 0
-        for file_path in self.folder.glod("*.wav"):
+        for file_path in self.folder.glob("*.wav"):
             waveform, sample_rate = torchaudio.load(file_path, normalize=True)
 
             mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
@@ -69,27 +81,35 @@ class Pipeline:
             mel_spec_db = db_transform(mel_spectrogram)
 
             self.spectrograms[file_path.stem] = Data(None, mel_spec_db)
-            if i % 1000 == 0:
-                break
-            i += 1
 
     def fill_rprs(self):
         i = 0
         max_length = 0
         for file_path in self.folder.glob("*.wav"):
             waveform, sample_rate = torchaudio.load(file_path, normalize=True)
-            transform = transforms.MFCC(
-                sample_rate=sample_rate,
-                n_mfcc=23,
-                melkwargs={
-                    "n_fft": 400,
-                    "hop_length": 160,
-                    "n_mels": 23,
-                    "center": False,
-                },
-            )
-
-            rpr = transform(waveform)
+            if self.repr_type == "mfcc":
+                transform = transforms.MFCC(
+                    sample_rate=sample_rate,
+                    n_mfcc=self.repr_n_mels,
+                    melkwargs={
+                        "n_fft": 400,
+                        "hop_length": 160,
+                        "n_mels": self.repr_n_mels,
+                        "center": False,
+                    },
+                )
+                rpr = transform(waveform)
+            elif self.repr_type in {"mel", "melspectrogram"}:
+                mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
+                    sample_rate=sample_rate,
+                    n_fft=400,
+                    hop_length=160,
+                    n_mels=self.repr_n_mels,
+                )
+                db_transform = torchaudio.transforms.AmplitudeToDB()
+                rpr = db_transform(mel_spectrogram_transform(waveform))
+            else:
+                raise ValueError(f"Unknown repr_type: {self.repr_type}")
             max_length = max(max_length, rpr.shape[2])
 
             self.s_rpr[file_path.stem] = Data(
@@ -155,27 +175,39 @@ class Pipeline:
 
         waveform, sample_rate = torchaudio.load(wav_path, normalize=True)
 
-        transform = transforms.MFCC(
-            sample_rate=sample_rate,
-            n_mfcc=23,  # Must match training
-            melkwargs={
-                "n_fft": 400,
-                "hop_length": 160,
-                "n_mels": 23,
-                "center": False,
-            },
-        )
-
-        rpr = transform(waveform)
+        if self.repr_type == "mfcc":
+            transform = transforms.MFCC(
+                sample_rate=sample_rate,
+                n_mfcc=self.repr_n_mels,  # Must match training
+                melkwargs={
+                    "n_fft": 400,
+                    "hop_length": 160,
+                    "n_mels": self.repr_n_mels,
+                    "center": False,
+                },
+            )
+            rpr = transform(waveform)
+            
+            rpr = rpr.to(self.device)
+        else:
+            mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sample_rate,
+                n_fft=400,
+                hop_length=160,
+                n_mels=self.repr_n_mels,
+            )
+            db_transform = torchaudio.transforms.AmplitudeToDB()
+            rpr = db_transform(mel_spectrogram_transform(waveform))
 
         input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)  # [Time, 23]
 
         with torch.no_grad():
+            input_to_mlp = input_to_mlp.to(self.device)
             preds = self.model(input_to_mlp)  # [Time, Classes]
             preds = F.log_softmax(preds, dim=1)
             preds = preds.unsqueeze(1)  # [Time, 1, Classes] for consistency
 
-        transcript = self.decode_prediction(preds)
+        transcript = self.decode_prediction(preds.cpu())
         print(f"File: {Path(wav_path).name}")
         print(f"Prediction: {transcript}")
         return transcript
@@ -183,33 +215,52 @@ class Pipeline:
     def train_model(self):
         loss_fn = torch.nn.CTCLoss(blank=0, zero_infinity=True)
         optim = torch.optim.Adam(self.model.parameters(), lr=3e-4)
-        EPOCHS = 10
+        EPOCHS = 20
         sample_answer = ""
         for epoch in range(0, EPOCHS):
             total_loss = 0
             print(f"Epoch {epoch + 1} / {EPOCHS}")
-            for data in self.s_rpr.values():
-                rpr = data.rpr
+            for i, data in enumerate(self.s_rpr.values()):
+                rpr = data.rpr.to(self.device)
                 optim.zero_grad()
                 # input_to_mlp = rpr.permute(0, 2, 1).squeeze(0)
 
                 preds = self.model(rpr)
                 # preds = preds.unsqueeze(1)
+                
 
                 seq_len = preds.size(0)
 
                 input_lengths = torch.full(
-                    size=(1,), fill_value=seq_len, dtype=torch.long
+                    size=(1,), fill_value=seq_len, dtype=torch.long, device=self.device
                 )
                 target_lengths = torch.tensor([data.label.size(0)], dtype=torch.long)
+                target_lengths = target_lengths.to(self.device)
 
-                loss = loss_fn(preds, data.label, input_lengths, target_lengths)
+                label = data.label.to(self.device)
+                loss = loss_fn(preds, label, input_lengths, target_lengths)
                 loss.backward()
+                
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
 
                 total_loss += loss.item()
                 optim.step()
-                if epoch == EPOCHS - 1:
-                    sample_answer += self.decode_prediction(preds)
+
+            # Periodic: evaluate first sample as quick sanity-check & print
+            try:
+                first_key = next(iter(self.s_rpr))
+                print("Sanity check inference on sample:", first_key)
+                sample_wav = self.s_rpr[first_key].rpr.to(self.device)
+                # run the model in eval and without grad
+                self.model.eval()
+                with torch.no_grad():
+                    preds_check = self.model(sample_wav)
+                    # Move to CPU for decoding
+                    transcript_check = self.decode_prediction(preds_check.cpu())
+                print("  Inferred (sanity):", transcript_check)
+                self.model.train()
+            except StopIteration:
+                pass
 
             avg_loss = total_loss / len(self.s_rpr)
 
@@ -233,7 +284,7 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     INPUT_SIZE = 23
     HIDDEN_SIZE = 32
-    OUTPUT_SIZE = 27
+    OUTPUT_SIZE = 28  # 26 letters + space + blank
     N_LAYERS = 2
     model = MLP(
         input_size=INPUT_SIZE,
@@ -241,11 +292,20 @@ if __name__ == "__main__":
         output_size=OUTPUT_SIZE,
         n_layers=N_LAYERS,
     )
+    # If anyone wants to use MelSpectrogram, set repr_type='mel' and repr_n_mels=128
+    REPR_TYPE = "mel"
+    REPR_N_MELS = 128
+
     lstm_model = CNN(
         input_chanels=1,
         output_channels=64,
-        input_size=128,
-        hidden_size=32,
+        input_size=REPR_N_MELS,
+        hidden_size=128,
+        n_classes=OUTPUT_SIZE,
     )
-    pipeline = Pipeline(lstm_model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    pipeline = Pipeline(
+        lstm_model, repr_type=REPR_TYPE, repr_n_mels=REPR_N_MELS, device=device
+    )
     pipeline.launch_pipeline()
