@@ -33,19 +33,18 @@ class TransformerDecoder(nn.Module):
             nn.Linear(feed_forward_dim, embed_dim),
         )
 
-    def causal_attention_mask(self, batch_size, n_dest, n_src, dtype=torch.bool):
+    def causal_attention_mask(self, n_dest, n_src, dtype=torch.bool):
         """Masks the upper half of the dot product matrix in self attention.
 
         This prevents flow of information from future tokens to current token.
         1's in the lower triangle, counting from the lower right corner.
+        
+        Returns 2D mask that will be broadcast across batch and heads.
         """
         i = torch.arange(n_dest).unsqueeze(1)
         j = torch.arange(n_src)
         m = i >= j - n_src + n_dest
         mask = m.to(dtype)
-        mask = mask.unsqueeze(0)
-
-        mask = mask.expand(batch_size, -1, -1)
         return mask
 
     def forward(self, enc_out, target):
@@ -59,9 +58,7 @@ class TransformerDecoder(nn.Module):
         """
         batch_size, seq_len, _ = target.shape
 
-        causal_mask = self.causal_attention_mask(
-            batch_size, seq_len, seq_len, dtype=torch.bool
-        )
+        causal_mask = self.causal_attention_mask(seq_len, seq_len, dtype=torch.bool)
 
         # Invert mask: PyTorch masks positions where mask=True this why we put the operatio before the causal mask
         # We dont want the model to cheat so we need to use a upper matrix that will cancel
