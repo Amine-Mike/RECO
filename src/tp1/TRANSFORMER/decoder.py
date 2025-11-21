@@ -38,7 +38,7 @@ class TransformerDecoder(nn.Module):
 
         This prevents flow of information from future tokens to current token.
         1's in the lower triangle, counting from the lower right corner.
-        
+
         Returns 2D mask that will be broadcast across batch and heads.
         """
         i = torch.arange(n_dest).unsqueeze(1)
