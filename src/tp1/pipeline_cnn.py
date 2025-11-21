@@ -34,10 +34,26 @@ class CNNPipeline:
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.s_rpr = {}
+        self.val_sample = None
+        self.val_sample_name = None
         self.expected_output_size = len(CHARS) + 1
 
     def fill_rprs(self):
-        print(f"Loading audio files (max_samples={self.max_samples})...")
+        print("Loading validation sample...")
+        val_samples = fill_rprs_from_folder(
+            self.folder,
+            self.metadata,
+            repr_type=self.repr_type,
+            repr_n_mels=self.repr_n_mels,
+            max_samples=1,
+            pad_sequences=False,
+        )
+        if val_samples:
+            self.val_sample_name = next(iter(val_samples))
+            self.val_sample = val_samples[self.val_sample_name]
+            print(f"Validation sample: {self.val_sample_name}")
+
+        print(f"Loading training samples (max_samples={self.max_samples})...")
         self.s_rpr = fill_rprs_from_folder(
             self.folder,
             self.metadata,
@@ -45,8 +61,9 @@ class CNNPipeline:
             repr_n_mels=self.repr_n_mels,
             max_samples=self.max_samples,
             pad_sequences=False,
+            skip_samples=1,
         )
-        print(f"Loaded {len(self.s_rpr)} samples")
+        print(f"Loaded {len(self.s_rpr)} training samples")
 
     def inference(self, wav_path: str) -> str:
         self.model.eval()
@@ -98,7 +115,6 @@ class CNNPipeline:
                 rpr = data.rpr.to(self.device)
                 label = data.label.to(self.device)
 
-                # ensure shape: [batch, ch, n_mels, time]
                 if rpr.dim() == 3:
                     rpr = rpr.unsqueeze(0)
                 if rpr.dim() == 3:
@@ -120,18 +136,24 @@ class CNNPipeline:
                 opt.step()
 
                 total_loss += loss.item()
-            try:
-                first_key = next(iter(self.s_rpr))
-                print("Sanity check inference on sample:", first_key)
-                sample_wav = self.s_rpr[first_key].rpr.to(self.device)
+
+            # Validation inference on held-out sample
+            if self.val_sample is not None:
+                print(f"Validation inference on sample: {self.val_sample_name}")
+                val_rpr = self.val_sample.rpr.to(self.device)
+
+                # ensure shape: [batch, ch, n_mels, time]
+                if val_rpr.dim() == 3:
+                    val_rpr = val_rpr.unsqueeze(0)
+                if val_rpr.dim() == 3:
+                    val_rpr = val_rpr.unsqueeze(1)
+
                 self.model.eval()
                 with torch.no_grad():
-                    preds_check = self.model(sample_wav)
+                    preds_check = self.model(val_rpr)
                     transcript_check = decode_prediction(preds_check.cpu())
-                print("  Inferred (sanity):", transcript_check)
+                print("  Predicted:", transcript_check)
                 self.model.train()
-            except StopIteration:
-                pass
 
             avg = total_loss / len(self.s_rpr) if len(self.s_rpr) else 0
             print(f"Avg loss: {avg:.4f}")
@@ -140,7 +162,7 @@ class CNNPipeline:
         self.fill_rprs()
         if len(self.s_rpr) == 0:
             raise RuntimeError("No wav files were found in the provided folder")
-        self.train_model(epochs=10)
+        self.train_model(epochs=50)
 
 
 if __name__ == "__main__":

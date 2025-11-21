@@ -34,12 +34,30 @@ class MLPPipeline:
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.s_rpr = {}
+        self.val_sample = None
+        self.val_sample_name = None
 
         # CTCLoss expects classes + 1 blank token
         self.expected_output_size = len(CHARS) + 1
 
     def fill_rprs(self) -> None:
-        print(f"Loading audio files (max_samples={self.max_samples})...")
+        # Load validation sample (first sample, not in training set)
+        print("Loading validation sample...")
+        val_samples = fill_rprs_from_folder(
+            self.folder,
+            self.metadata,
+            repr_type=self.repr_type,
+            repr_n_mels=self.repr_n_mels,
+            max_samples=1,
+            pad_sequences=True,
+        )
+        if val_samples:
+            self.val_sample_name = next(iter(val_samples))
+            self.val_sample = val_samples[self.val_sample_name]
+            print(f"Validation sample: {self.val_sample_name}")
+        
+        # Load training samples (skip first sample used for validation)
+        print(f"Loading training samples (max_samples={self.max_samples})...")
         self.s_rpr = fill_rprs_from_folder(
             self.folder,
             self.metadata,
@@ -47,6 +65,7 @@ class MLPPipeline:
             repr_n_mels=self.repr_n_mels,
             max_samples=self.max_samples,
             pad_sequences=True,
+            skip_samples=1,
         )
         print(f"Loaded {len(self.s_rpr)} samples")
 
@@ -141,23 +160,21 @@ class MLPPipeline:
                         f"  Processed {i + 1}/{len(self.s_rpr)} samples, loss={loss.item():.4f}"
                     )
 
-            try:
-                first_key = next(iter(self.s_rpr))
-                print("Sanity check inference on sample:", first_key)
-                sample_rpr = self.s_rpr[first_key].rpr.to(self.device)
+            # Validation inference on held-out sample
+            if self.val_sample is not None:
+                print(f"Validation inference on sample: {self.val_sample_name}")
+                val_rpr = self.val_sample.rpr.to(self.device)
 
                 self.model.eval()
                 with torch.no_grad():
                     # permute to [time, features] for MLP
-                    input_to_mlp = sample_rpr.permute(0, 2, 1).squeeze(0)
+                    input_to_mlp = val_rpr.permute(0, 2, 1).squeeze(0)
                     preds_check = self.model(input_to_mlp)
                     if preds_check.dim() == 2:
                         preds_check = preds_check.unsqueeze(1)
                     transcript_check = decode_prediction(preds_check.cpu())
-                print("  Inferred (sanity):", transcript_check)
+                print("  Predicted:", transcript_check)
                 self.model.train()
-            except StopIteration:
-                pass
 
             avg = total_loss / len(self.s_rpr) if len(self.s_rpr) else 0
             print(f"Avg loss: {avg:.4f}")

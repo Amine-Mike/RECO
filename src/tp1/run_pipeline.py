@@ -49,7 +49,7 @@ def main():
         output_channels = 64
         input_size = 128
         hidden_size = 128
-        max_samples = 100
+        max_samples = 2000
         model_type = "BI-LSTM"  # Options: "LSTM", "BI-LSTM", "GRU"
         print(f"Preparing CNN model... with {model_type} predicition head")
         model = CNN(

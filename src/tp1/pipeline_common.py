@@ -81,11 +81,19 @@ def fill_rprs_from_folder(
     repr_n_mels: int = 23,
     max_samples: Optional[int] = None,
     pad_sequences: bool = True,
+    skip_samples: int = 0,
 ) -> Dict[str, Data]:
     """
     Scans the folder for wavs and builds representations. Returns dict mapping filename stem -> Data(label, rpr)
     If pad_sequences=True (for MLP), pads all sequences to the longest length.
+<<<<<<< Updated upstream
     If pad_sequences=False (for CNN+RNN), keeps variable lengths.
+=======
+    If pad_sequences=False (for CNN+LSTM), keeps variable lengths.
+    
+    Args:
+        skip_samples: Number of samples to skip at the beginning (useful for train/val split)
+>>>>>>> Stashed changes
     """
     folder = Path(folder)
     metadata_path = Path(metadata_path)
@@ -98,6 +106,15 @@ def fill_rprs_from_folder(
     i = 0
 
     for file_path in folder.glob("*.wav"):
+        # Skip samples for train/val split
+        if i < skip_samples:
+            i += 1
+            continue
+            
+        if (i - skip_samples) % 10 == 0:
+            print(f"  Loading sample {i - skip_samples}...", end="\r")
+        
+        waveform, sample_rate = torchaudio.load(file_path, normalize=True)
         if i % 10 == 0:
             print(f"  Loading sample {i}...", end="\r")
         waveform, sample_rate = torchaudio.load(file_path, normalize=True)
@@ -125,7 +142,7 @@ def fill_rprs_from_folder(
         s_rpr[file_path.stem] = Data(label_tensor, rpr)
 
         i += 1
-        if max_samples is not None and i >= max_samples:
+        if max_samples is not None and (i - skip_samples) >= max_samples:
             break
 
     if pad_sequences:
