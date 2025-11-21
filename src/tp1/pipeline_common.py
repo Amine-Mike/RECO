@@ -85,7 +85,7 @@ def fill_rprs_from_folder(
     """
     Scans the folder for wavs and builds representations. Returns dict mapping filename stem -> Data(label, rpr)
     If pad_sequences=True (for MLP), pads all sequences to the longest length.
-    If pad_sequences=False (for CNN+LSTM), keeps variable lengths.
+    If pad_sequences=False (for CNN+RNN), keeps variable lengths.
     """
     folder = Path(folder)
     metadata_path = Path(metadata_path)
