@@ -13,8 +13,9 @@ class TokenEmbedding(nn.Module):
         x = self.s_emb(x)
         positions = torch.arange(maxlen, device=x.device)
         positions = self.pos_emb(positions)
-        # Scale embeddings by sqrt(embedding_dim) as in original Transformer paper
-        return x * (self.s_emb.embedding_dim ** 0.5) + positions
+        # Scale embeddings by sqrt(embedding_dim) as in original Transformer paper, to prevent the high std
+        # this could explain why I had exploding gradients
+        return x * (self.s_emb.embedding_dim**0.5) + positions
 
 
 class SpeechFeatureEmbedding(nn.Module):
@@ -32,8 +33,6 @@ class SpeechFeatureEmbedding(nn.Module):
         super().__init__()
         self.num_hid = num_hid
 
-        # Convolutional layers to process spectrogram features
-        # Input: [batch, time, freq=129] from STFT
         self.conv1 = nn.Sequential(
             nn.Conv1d(
                 in_channels=129,
@@ -80,21 +79,19 @@ class SpeechFeatureEmbedding(nn.Module):
         Returns:
             Embedded features [batch_size, time//8, num_hid]
         """
-        # Transpose for Conv1d: [batch, time, freq] -> [batch, freq, time]
+        # [batch, time, freq] -> [batch, freq, time]
         x = x.transpose(1, 2)
 
-        # Apply convolutional layers
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
 
-        # Transpose back: [batch, num_hid, time] -> [batch, time, num_hid]
+        # [batch, num_hid, time] -> [batch, time, num_hid]
         x = x.transpose(1, 2)
 
-        # Add positional encoding
         seq_len = x.size(1)
         positions = torch.arange(seq_len, device=x.device)
         pos_emb = self.pos_emb(positions)
 
-        # Scale for stability
-        return x * (self.num_hid ** 0.5) + pos_emb
+        # Again I will scale by the std
+        return x * (self.num_hid**0.5) + pos_emb

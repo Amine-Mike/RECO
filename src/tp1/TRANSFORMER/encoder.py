@@ -23,16 +23,14 @@ class TransformerEncoder(nn.Module):
         Args:
             inputs: Input tensor [batch_size, seq_len, embed_dim]
             training: Optional training flag (PyTorch handles this via model.train()/model.eval())
-
         Returns:
             Encoder output [batch_size, seq_len, embed_dim]
+            The rich semantics captured by the Encoder block
         """
-        # Self-attention
         attn_output, _ = self.att(inputs, inputs, inputs, need_weights=False)
         attn_output = self.dropout1(attn_output)
         out1 = self.layernorm1(inputs + attn_output)
 
-        # Feed-forward network
         ffn_output = self.ffn(out1)
         ffn_output = self.dropout2(ffn_output)
 

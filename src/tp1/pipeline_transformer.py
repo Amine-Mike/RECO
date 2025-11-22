@@ -1,12 +1,13 @@
 from pathlib import Path
-from typing import Dict, List, Optional
-import warnings
+import pandas as pd
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.optim import Adam
 from torch.utils.data import Dataset, DataLoader
 import torchaudio
+from typing import Dict, List, Optional
+import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
 
@@ -25,7 +26,6 @@ class VectorizeChar:
         for i, ch in enumerate(self.vocab):
             self.char_to_idx[ch] = i
 
-        # Create reverse mapping
         self.idx_to_char = {i: ch for ch, i in self.char_to_idx.items()}
 
     def __call__(self, text):
@@ -38,7 +38,6 @@ class VectorizeChar:
         Returns:
             List of indices with padding
         """
-        # Handle non-string inputs (NaN, None, float, etc.)
         if not isinstance(text, str):
             text = str(text) if text is not None else ""
 
@@ -67,13 +66,12 @@ class VectorizeChar:
 
         text = ""
         for idx in indices:
-            if idx == 0:  # Padding
+            if idx == 0:
                 continue
-            if idx == 3:  # End token '>'
+            if idx == 3:
                 break
             text += self.idx_to_char.get(idx, "#")
 
-        # Remove start token '<'
         text = text.replace("<", "").replace("-", "")
         return text
 
@@ -89,11 +87,9 @@ def path_to_audio(path, pad_len=2754):
     Returns:
         Normalized spectrogram [time, freq]
     """
-    # Load audio
     waveform, sample_rate = torchaudio.load(path, normalize=True)
     audio = waveform.squeeze(0)  # Remove channel dimension
 
-    # Compute STFT
     stfts = torch.stft(
         audio,
         n_fft=256,
@@ -103,16 +99,13 @@ def path_to_audio(path, pad_len=2754):
         return_complex=True,
     )
 
-    # Magnitude spectrogram with power 0.5
     x = torch.abs(stfts).pow(0.5)
     x = x.transpose(0, 1)  # [time, freq]
 
-    # Normalization per frequency bin
     means = x.mean(dim=0, keepdim=True)
     stddevs = x.std(dim=0, keepdim=True)
     x = (x - means) / (stddevs + 1e-8)
 
-    # Pad or truncate to fixed length
     audio_len = x.shape[0]
     if audio_len < pad_len:
         padding = torch.zeros((pad_len - audio_len, x.shape[1]))
@@ -149,10 +142,8 @@ class TransformerDataset(Dataset):
         return len(self.audio_paths)
 
     def __getitem__(self, idx):
-        # Load and preprocess audio
         audio = path_to_audio(self.audio_paths[idx], self.pad_len)
 
-        # Vectorize text
         text_indices = self.vectorizer(self.texts[idx])
         text = torch.tensor(text_indices, dtype=torch.long)
 
@@ -173,12 +164,10 @@ def get_data_from_folder(
     Returns:
         List of dicts with 'audio' and 'text' keys
     """
-    import pandas as pd
 
     wav_folder = Path(wav_folder)
     metadata_path = Path(metadata_path)
 
-    # Read metadata
     df = pd.read_csv(
         metadata_path, sep="|", header=None, names=["id", "text", "normalized"]
     )
@@ -188,12 +177,9 @@ def get_data_from_folder(
     for i, row in df.iterrows():
         audio_path = wav_folder / f"{row['id']}.wav"
 
-        # Check if audio exists and text is valid
         if audio_path.exists():
-            # Use normalized text, fall back to original text if normalized is NaN
             text = row["normalized"] if pd.notna(row["normalized"]) else row["text"]
 
-            # Skip if text is still invalid
             if pd.isna(text) or (isinstance(text, float) and not isinstance(text, str)):
                 skipped += 1
                 continue
@@ -404,33 +390,28 @@ def train_transformer(
         checkpoint_dir: Directory to save checkpoints
         display_every: Display predictions every N epochs
     """
-    from torch.optim import Adam
-
-    # Setup
     model = model.to(device)
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(exist_ok=True)
 
-    # Optimizer and scheduler with safer learning rates
     optimizer = Adam(model.parameters(), lr=0.00001, betas=(0.9, 0.98), eps=1e-9)
     scheduler = CustomSchedule(
         optimizer,
         init_lr=0.00001,
-        lr_after_warmup=0.0003,  # Significantly reduced from 0.001 to prevent gradient explosion
+        lr_after_warmup=0.0003,
         final_lr=0.00001,
-        warmup_epochs=20,  # Slower warmup
+        warmup_epochs=20,
         decay_epochs=80,
         steps_per_epoch=len(train_loader),
     )
 
-    criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.0)  # No label smoothing initially
+    criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.0)
 
     val_batch = next(iter(val_loader))
 
     best_val_loss = float("inf")
 
     for epoch in range(epochs):
-        # Training
         model.train()
         train_loss = 0.0
 
@@ -438,11 +419,9 @@ def train_transformer(
             source = batch["source"].to(device)
             target = batch["target"].to(device)
 
-            # Prepare decoder input and target
             dec_input = target[:, :-1]
             dec_target = target[:, 1:]
 
-            # Forward pass
             optimizer.zero_grad()
             preds = model(source, dec_input)
 
@@ -450,13 +429,10 @@ def train_transformer(
                 preds.reshape(-1, model.num_classes), dec_target.reshape(-1)
             )
 
-            # Backward pass
             loss.backward()
-            
-            # Clip gradients BEFORE checking loss to prevent NaN propagation
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)  # More aggressive clipping
-            
-            # Check for NaN/Inf after gradient clipping
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+
             if torch.isnan(loss) or torch.isinf(loss) or grad_norm > 100.0:
                 print(
                     f"\nWarning: NaN/Inf loss or extreme gradients detected at epoch {epoch + 1}, batch {batch_idx}"
@@ -483,7 +459,6 @@ def train_transformer(
 
         avg_train_loss = train_loss / len(train_loader)
 
-        # Validation
         model.eval()
         val_loss = 0.0
 
@@ -542,6 +517,4 @@ def train_transformer(
                 },
                 checkpoint_path,
             )
-            print(f"✓ Saved checkpoint to {checkpoint_path}")
-
-    print("\nTraining completed!")
+            print(f"Saved checkpoint to {checkpoint_path}")

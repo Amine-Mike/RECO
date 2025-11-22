@@ -48,7 +48,7 @@ class Transformer(nn.Module):
         """Initialize weights with small values to prevent gradient explosion."""
         for name, param in self.named_parameters():
             if "weight" in name and param.dim() > 1:
-                nn.init.xavier_uniform_(param, gain=0.5)  # Smaller gain
+                nn.init.xavier_uniform_(param, gain=0.5)
             elif "bias" in name:
                 nn.init.constant_(param, 0.0)
 
@@ -146,8 +146,8 @@ def compute_loss(model, source, target, criterion):
     Returns:
         loss: Computed loss value
     """
-    dec_input = target[:, :-1]  # All but last token
-    dec_target = target[:, 1:]  # All but first token
+    dec_input = target[:, :-1]
+    dec_target = target[:, 1:]
 
     preds = model(source, dec_input)  # [batch_size, seq_len, num_classes]
 
