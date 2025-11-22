@@ -13,7 +13,8 @@ class TokenEmbedding(nn.Module):
         x = self.s_emb(x)
         positions = torch.arange(maxlen, device=x.device)
         positions = self.pos_emb(positions)
-        return x + positions
+        # Scale embeddings by sqrt(embedding_dim) as in original Transformer paper
+        return x * (self.s_emb.embedding_dim ** 0.5) + positions
 
 
 class SpeechFeatureEmbedding(nn.Module):
@@ -95,4 +96,5 @@ class SpeechFeatureEmbedding(nn.Module):
         positions = torch.arange(seq_len, device=x.device)
         pos_emb = self.pos_emb(positions)
 
-        return x + pos_emb
+        # Scale for stability
+        return x * (self.num_hid ** 0.5) + pos_emb

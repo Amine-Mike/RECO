@@ -23,7 +23,7 @@ class TransformerDecoder(nn.Module):
             batch_first=True,
         )
 
-        self.self_dropout = nn.Dropout(0.5)
+        self.self_dropout = nn.Dropout(0.1)  # Reduced from 0.5 to prevent instability
         self.enc_dropout = nn.Dropout(0.1)
         self.ffn_dropout = nn.Dropout(0.1)
 

@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from .embeddings import SpeechFeatureEmbedding, TokenEmbedding
-from .encoder import TransformerEncoder
-from .decoder import TransformerDecoder
+from embeddings import SpeechFeatureEmbedding, TokenEmbedding
+from encoder import TransformerEncoder
+from decoder import TransformerDecoder
 
 
 class Transformer(nn.Module):
@@ -24,28 +23,37 @@ class Transformer(nn.Module):
         self.target_maxlen = target_maxlen
         self.num_classes = num_classes
 
-        # Embedding layers
         self.enc_input = SpeechFeatureEmbedding(num_hid=num_hid, maxlen=source_maxlen)
         self.dec_input = TokenEmbedding(
             num_vocab=num_classes, maxlen=target_maxlen, num_hid=num_hid
         )
 
-        # Encoder: Sequential stack of transformer encoder layers
         encoder_layers = [
             TransformerEncoder(num_hid, num_head, num_feed_forward)
             for _ in range(num_layers_enc)
         ]
         self.encoder_layers = nn.ModuleList(encoder_layers)
 
-        # Decoder: Multiple transformer decoder layers
         decoder_layers = [
             TransformerDecoder(num_hid, num_head, num_feed_forward)
             for _ in range(num_layers_dec)
         ]
         self.decoder_layers = nn.ModuleList(decoder_layers)
 
-        # Classification head
         self.classifier = nn.Linear(num_hid, num_classes)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with small values to prevent gradient explosion."""
+        for name, param in self.named_parameters():
+            if "weight" in name and param.dim() > 1:
+                nn.init.xavier_uniform_(param, gain=0.5)  # Smaller gain
+            elif "bias" in name:
+                nn.init.constant_(param, 0.0)
+
+        nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
+        nn.init.constant_(self.classifier.bias, 0.0)
 
     def encode(self, source):
         """
@@ -109,21 +117,17 @@ class Transformer(nn.Module):
             bs = source.shape[0]
             enc = self.encode(source)
 
-            # Initialize decoder input with start token
             dec_input = (
                 torch.ones((bs, 1), dtype=torch.long, device=source.device)
                 * target_start_token_idx
             )
 
-            # Greedy decoding
-            for i in range(self.target_maxlen - 1):
+            for _ in range(self.target_maxlen - 1):
                 dec_out = self.decode(enc, dec_input)
                 logits = self.classifier(dec_out)
 
-                # Get the last token prediction (greedy: argmax)
                 last_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
-                # Append to decoder input
                 dec_input = torch.cat([dec_input, last_token], dim=1)
 
             return dec_input
@@ -142,18 +146,14 @@ def compute_loss(model, source, target, criterion):
     Returns:
         loss: Computed loss value
     """
-    # Prepare decoder input and target
     dec_input = target[:, :-1]  # All but last token
     dec_target = target[:, 1:]  # All but first token
 
-    # Forward pass
     preds = model(source, dec_input)  # [batch_size, seq_len, num_classes]
 
-    # Reshape for loss computation
     preds = preds.reshape(-1, model.num_classes)  # [batch_size * seq_len, num_classes]
     dec_target = dec_target.reshape(-1)  # [batch_size * seq_len]
 
-    # Compute loss (padding tokens with value 0 are ignored if criterion has ignore_index=0)
     loss = criterion(preds, dec_target)
 
     return loss
@@ -178,10 +178,8 @@ def train_step(model, batch, optimizer, criterion):
     source = batch["source"]
     target = batch["target"]
 
-    # Compute loss
     loss = compute_loss(model, source, target, criterion)
 
-    # Backward pass
     loss.backward()
     optimizer.step()
 
@@ -205,7 +203,6 @@ def test_step(model, batch, criterion):
         source = batch["source"]
         target = batch["target"]
 
-        # Compute loss
         loss = compute_loss(model, source, target, criterion)
 
     return loss.item()

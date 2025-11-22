@@ -411,22 +411,20 @@ def train_transformer(
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(exist_ok=True)
 
-    # Optimizer and scheduler
-    optimizer = Adam(model.parameters(), lr=0.00001)
+    # Optimizer and scheduler with safer learning rates
+    optimizer = Adam(model.parameters(), lr=0.00001, betas=(0.9, 0.98), eps=1e-9)
     scheduler = CustomSchedule(
         optimizer,
         init_lr=0.00001,
-        lr_after_warmup=0.001,
+        lr_after_warmup=0.0003,  # Significantly reduced from 0.001 to prevent gradient explosion
         final_lr=0.00001,
-        warmup_epochs=15,
-        decay_epochs=85,
+        warmup_epochs=20,  # Slower warmup
+        decay_epochs=80,
         steps_per_epoch=len(train_loader),
     )
 
-    # Loss function with label smoothing
-    criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.0)  # No label smoothing initially
 
-    # Get a validation batch for display
     val_batch = next(iter(val_loader))
 
     best_val_loss = float("inf")
@@ -448,14 +446,25 @@ def train_transformer(
             optimizer.zero_grad()
             preds = model(source, dec_input)
 
-            # Compute loss
             loss = criterion(
                 preds.reshape(-1, model.num_classes), dec_target.reshape(-1)
             )
 
             # Backward pass
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            
+            # Clip gradients BEFORE checking loss to prevent NaN propagation
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)  # More aggressive clipping
+            
+            # Check for NaN/Inf after gradient clipping
+            if torch.isnan(loss) or torch.isinf(loss) or grad_norm > 100.0:
+                print(
+                    f"\nWarning: NaN/Inf loss or extreme gradients detected at epoch {epoch + 1}, batch {batch_idx}"
+                )
+                print(f"Loss: {loss.item()}, Grad Norm: {grad_norm}")
+                print("Stopping training to prevent further issues.")
+                print(f"Last valid checkpoint: {checkpoint_dir / 'best_model.pt'}")
+                return
             optimizer.step()
             scheduler.step()
 
@@ -467,6 +476,7 @@ def train_transformer(
                     f"Epoch [{epoch + 1}/{epochs}] "
                     f"Batch [{batch_idx}/{len(train_loader)}] "
                     f"Loss: {loss.item():.4f} "
+                    f"GradNorm: {grad_norm:.3f} "
                     f"LR: {current_lr:.6f}",
                     end="\r",
                 )
@@ -492,7 +502,7 @@ def train_transformer(
 
                 val_loss += loss.item()
 
-        avg_val_loss = val_loss / len(val_loader)
+        avg_val_loss = val_loss / (len(val_loader) + 1)
 
         print(
             f"\nEpoch [{epoch + 1}/{epochs}] "
@@ -500,7 +510,6 @@ def train_transformer(
             f"Val Loss: {avg_val_loss:.4f}"
         )
 
-        # Display predictions
         if (epoch + 1) % display_every == 0:
             display_predictions(model, val_batch, vectorizer, device=device)
 
