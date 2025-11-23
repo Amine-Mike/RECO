@@ -11,7 +11,7 @@ The goal of the experiments is to compare model architectures, training stabilit
 
 ## Quick Summary
 
-- Models implemented: `MLP`, `CNN + (BI-)LSTM`, `Transformer`
+- Models implemented: `MLP`, `CNN + (BI-)LSTM | GRU`, `Transformer`
 - Dataset: `LJSpeech-1.1`
 - Loss: `CTCLoss` (CNN/MLP), `CrossEntropy` (Transformer)
 - CTC blank index: `0`
@@ -53,8 +53,7 @@ The repository expects `data/LJSpeech-1.1/wavs` and `data/LJSpeech-1.1/metadata.
 ```fish
 uv run src/tp1/run_cnn.py --data_dir data/LJSpeech-1.1 --max_samples 10000 --epochs 100 --batch_size 32 --lr 0.0003 --models [MODEL NAME]
 ```
-
-If you trained different RNN variants, save to separate checkpoint folders to avoid overwriting. Examples:
+Here are a few example of how we train our models using the different pipelines :
 
 ```fish
 # LSTM (default)
@@ -98,7 +97,8 @@ uv run src/tp1/run_pipeline.py mlp --data_dir data/LJSpeech-1.1 --max_samples 20
   - Label smoothing as in the script
 
 - MLP:
-  - Use padding and fixed-size MFCC as inputs
+  - We Use padding and fixed-size MFCC as inputs
+  - Padding was needed due to the MLP that requires fixed sized inputs
 
 ---
 
@@ -109,10 +109,10 @@ Fill this table with your measured results. Use the `PipelineBenchmarker` to mea
 | Model           | Dataset (samples) | #Params     | Train time (s) | Time/epoch (s) | Epochs | Batch | LR     | Final Train Loss | Final Val Loss | CER (%) | WER (%) | Notes |
 |-----------------|-------------------|------------:|---------------:|---------------:|-------:|------:|--------|-----------------:|---------------:|--------:|--------:|-------|
 | MLP             | 2000              | {TO_FILL}   | {TO_FILL}      | {TO_FILL}      | {TO_FILL} | 64   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
-| CNN + LSTM      | 10000             | 1,119,452   | {TO_FILL}      | {TO_FILL}      | 100     | 32   | 3e-4   | 0.62035          | 0.78376        | 24.08%  | 74.14%  | model_type: LSTM |
-| CNN + BI-LSTM   | 10000             | 2,238,172   | {TO_FILL}      | {TO_FILL}      | 100     | 32   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
-| CNN + GRU       | 10000             |   840,668   | {TO_FILL}      | {TO_FILL}      | 100     | 32   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
-| Transformer     | 2000              | 3,057,630   | {TO_FILL}      | {TO_FILL}      | 100     | 64   | (sched) | 0.34250          | 0.51647        | 13.78%  | 37.08%  |  |
+| CNN + LSTM      | 10000             | 1,119,452   | 5675.2523      | {TO_FILL}      | 100     | 32   | 3e-4   | 0.62035          | 0.78376        | 24.08%  | 74.14%  | model_type: LSTM |
+| CNN + BI-LSTM   | 10000             | 2,238,172   | 6190.2688      | 62.25      | 100     | 32   | 3e-4   | 0.48487        | 0.6975      | 16.83% | 58.04% |  |
+| CNN + GRU       | 10000             |   840,668   | 5503.1787      | {TO_FILL}      | 100     | 32   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
+| Transformer     | 10000              | 3,057,630   | 2982.2758      | 30.12     | 100     | 64   | (sched) | 0.34250          | 0.51647        | 13.78%  | 37.08%  |  |
 
 Notes:
 - `#Params` can be obtained from the run scripts which print the counts.
@@ -121,7 +121,6 @@ Notes:
 
 How these results were produced:
 - CER/WER were computed using `scripts/compute_error_rates.py` on the `best_model.pt` of each model.
-- Train/Val loss were read from the checkpoint if present (the script prints them if available).
 - Commands used during evaluation:
   - CNN: `uv run scripts/compute_error_rates.py --model cnn --checkpoint checkpoints_cnn/best_model.pt --data_dir data/LJSpeech-1.1 --max_samples 10000 --batch_size 32 --repr_n_mels 128 --hidden_size 128 --model_type LSTM`
   - Transformer: `uv run scripts/compute_error_rates.py --model transformer --checkpoint checkpoints_transformer/best_model.pt --data_dir data/LJSpeech-1.1 --max_samples 2000 --batch_size 64 --max_target_len 200`
@@ -163,13 +162,12 @@ Transformer:
 
 ---
 
-## Metrics (suggested implementations)
+## Metrics
 
 - Compute CER/WER with a small script that computes edit distance (Levenshtein) on the decoded predictions vs ground truth.
 - Use the held-out validation loader to compute val loss and CER/WER per epoch.
 
-Suggested tools:
-- `python scripts/compute_error_rates.py --pred predictions.txt --ref references.txt` (create if needed)
+Tools made to test models:
 - Use `scripts/compute_error_rates.py` to compute CER/WER from a checkpoint; examples below.
 
 How to compute CER/WER from a checkpoint:
@@ -199,27 +197,3 @@ uv run scripts/compute_error_rates.py \
 ```
 
 ---
-
-## Repro & Next Steps
-
-Reproduce the experiments:
-
-1. Setup environment and install dependencies.
-2. Run `download_data.sh` to fetch dataset.
-3. Run training commands above; collect logs and metrics.
-4. Use `checkpoints_*` folders for model rebuilding and evaluation.
-
-Next steps / suggestions:
-- Add CER/WER automated evaluation and logs per epoch.
-- Add additional validation samples and track learning curves (train vs val loss over epochs).
-- Add beam search decoding and a small language model for improved predictions.
-
----
-
-## Acknowledgements
-
-Tutorial and references used during development and debugging (LJSpeech dataset, PyTorch tutorials, torchaudio docs).
-
----
-
-If you want, I can autofill the `#Params` and first-run times by rerunning each script with a standard config and filling the table automatically. Just say the word and I will run the runs and fill the results in this README.
