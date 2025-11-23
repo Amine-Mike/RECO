@@ -105,13 +105,14 @@ uv run src/tp1/run_pipeline.py mlp --data_dir data/LJSpeech-1.1 --max_samples 20
 ## Experiments & Results Table
 
 Fill this table with your measured results. Use the `PipelineBenchmarker` to measure training time and record number of params reported by each runner.
+In each rnn models we only kept one layer of RNN in total to keep models small for training
 
 | Model           | Dataset (samples) | #Params     | Train time (s) | Time/epoch (s) | Epochs | Batch | LR     | Final Train Loss | Final Val Loss | CER (%) | WER (%) | Notes |
 |-----------------|-------------------|------------:|---------------:|---------------:|-------:|------:|--------|-----------------:|---------------:|--------:|--------:|-------|
-| MLP             | 2000              | {TO_FILL}   | {TO_FILL}      | {TO_FILL}      | {TO_FILL} | 64   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
-| CNN + LSTM      | 10000             | 1,119,452   | 5675.2523      | {TO_FILL}      | 100     | 32   | 3e-4   | 0.62035          | 0.78376        | 24.08%  | 74.14%  | model_type: LSTM |
+| MLP             | 2000              | 2,748   | 25.6354            | 4.27      | 100 | 64   | 3e-4   | 13.16        | 13.16      | 98.99%  | 100.00% |  |
+| CNN + LSTM      | 10000             | 1,119,452   | 5675.2523      | 57.20      | 100     | 32   | 3e-4   | 0.62035          | 0.78376        | 24.08%  | 74.14%  | model_type: LSTM |
 | CNN + BI-LSTM   | 10000             | 2,238,172   | 6190.2688      | 62.25      | 100     | 32   | 3e-4   | 0.48487        | 0.6975      | 16.83% | 58.04% |  |
-| CNN + GRU       | 10000             |   840,668   | 5503.1787      | {TO_FILL}      | 100     | 32   | 3e-4   | {TO_FILL}        | {TO_FILL}      | {TO_FILL} | {TO_FILL} |  |
+| CNN + GRU       | 10000             |   840,668   | 5503.1787      | 55.17      | 100     | 32   | 3e-4   | 0.57961        | 0.78522      | 20.42% |  66.40%  |  |
 | Transformer     | 10000              | 3,057,630   | 2982.2758      | 30.12     | 100     | 64   | (sched) | 0.34250          | 0.51647        | 13.78%  | 37.08%  |  |
 
 Notes:
