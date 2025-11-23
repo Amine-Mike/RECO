@@ -6,13 +6,13 @@ Usage:
 """
 
 import argparse
-import torch
 from pathlib import Path
 
+import torch
 from pipeline_transformer import (
     VectorizeChar,
-    get_data_from_folder,
     create_dataloaders,
+    get_data_from_folder,
     train_transformer,
 )
 from TRANSFORMER.model import Transformer
