@@ -21,6 +21,10 @@ class MLPPipeline:
         repr_n_mels: int = 23,
         device: Optional[torch.device] = None,
         max_samples: Optional[int] = None,
+        checkpoint_dir: Optional[str] = None,
+        save_checkpoints: bool = False,
+        hidden_size: Optional[int] = None,
+        n_layers: Optional[int] = None,
     ):
         self.model = model
         self.folder = folder
@@ -39,6 +43,10 @@ class MLPPipeline:
 
         # CTCLoss expects classes + 1 blank token
         self.expected_output_size = len(CHARS) + 1
+        self.checkpoint_dir = checkpoint_dir
+        self._save_checkpoints = save_checkpoints
+        self.hidden_size = hidden_size
+        self.n_layers = n_layers
 
     def fill_rprs(self) -> None:
         # Load validation sample (first sample, not in training set)
@@ -106,7 +114,7 @@ class MLPPipeline:
 
         return decode_prediction(preds.cpu())
 
-    def train_model(self, epochs: int = 20, lr: float = 3e-4):
+    def train_model(self, epochs: int = 20, lr: float = 3e-4, checkpoint_dir: str = "checkpoints_mlp"):
         print(f"Starting training on {self.device} Device")
         self.model.to(self.device)
 
@@ -127,6 +135,15 @@ class MLPPipeline:
         opt = torch.optim.Adam(self.model.parameters(), lr=lr)
         loss_fn = torch.nn.CTCLoss(blank=0, zero_infinity=True)
 
+        if checkpoint_dir is None:
+            checkpoint_dir = self.checkpoint_dir or "checkpoints_mlp"
+
+        from pathlib import Path
+        chkpt_dir = Path(checkpoint_dir)
+        if self._save_checkpoints:
+            chkpt_dir.mkdir(exist_ok=True, parents=True)
+
+        best_val_loss = float('inf')
         for epoch in range(1, epochs + 1):
             print(f"Epoch {epoch}/{epochs}")
             self.model.train()
@@ -179,11 +196,50 @@ class MLPPipeline:
             avg = total_loss / len(self.s_rpr) if len(self.s_rpr) else 0
             print(f"Avg loss: {avg:.4f}")
 
-    def launch_pipeline(self):
+            # Save checkpoints if requested
+            if self._save_checkpoints:
+                if avg < best_val_loss:
+                    best_val_loss = avg
+                    checkpoint_path = chkpt_dir / "best_model.pt"
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "model_state_dict": self.model.state_dict(),
+                            "optimizer_state_dict": opt.state_dict(),
+                            "train_loss": avg,
+                            "val_loss": avg,  # MLP only uses avg of training loop as the proxy
+                            "model_type": "MLP",
+                            "repr_n_mels": self.repr_n_mels,
+                            "hidden_size": self.hidden_size,
+                            "n_layers": self.n_layers,
+                        },
+                        checkpoint_path,
+                    )
+                    print(f"Saved best MLP model to {checkpoint_path}")
+
+                if epoch % 10 == 0:
+                    checkpoint_path = chkpt_dir / f"checkpoint_epoch_{epoch}.pt"
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "model_state_dict": self.model.state_dict(),
+                            "optimizer_state_dict": opt.state_dict(),
+                            "train_loss": avg,
+                            "val_loss": avg,
+                            "model_type": "MLP",
+                            "repr_n_mels": self.repr_n_mels,
+                            "hidden_size": self.hidden_size,
+                            "n_layers": self.n_layers,
+                        },
+                        checkpoint_path,
+                    )
+                    print(f"Saved checkpoint to {checkpoint_path}")
+
+    def launch_pipeline(self, epochs: int = 20, lr: float = 3e-4, checkpoint_dir: str = "checkpoints_mlp"):
         self.fill_rprs()
         if len(self.s_rpr) == 0:
             raise RuntimeError("No wav files were found in the provided folder")
-        self.train_model()
+        self.train_model(epochs=epochs, lr=lr, checkpoint_dir=checkpoint_dir)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run MLP or CNN pipeline")
     parser.add_argument("mode", choices=["mlp", "cnn"], help="Which pipeline to run")
     parser.add_argument("--device", default=None, help="CUDA device or cpu")
+    # General pipeline flags
+    parser.add_argument("--max_samples", type=int, default=None, help="Max samples to load for training")
+    parser.add_argument("--epochs", type=int, default=None, help="Number of epochs to train (overrides defaults)")
+    parser.add_argument("--lr", type=float, default=None, help="Learning rate to use (override)")
+    parser.add_argument("--repr_n_mels", type=int, default=None, help="Number of mels for representations (override)")
+    parser.add_argument("--save_checkpoints", action='store_true', help="Whether to save checkpoints during training")
+    parser.add_argument("--checkpoint_dir", default=None, help="Where to write generated checkpoints")
     args = parser.parse_args()
 
     device = (
@@ -24,10 +31,15 @@ def main():
 
     if args.mode == "mlp":
         print(f"Model chosen MLP on device {device}")
-        input_size = 23
+        input_size = args.repr_n_mels if args.repr_n_mels is not None else 23
         hidden_size = 32
         n_layers = 2
-        max_samples = 100
+        max_samples = args.max_samples if args.max_samples is not None else 100
+        epochs = args.epochs if args.epochs is not None else 20
+        lr = args.lr if args.lr is not None else 3e-4
+        repr_n_mels = input_size
+        checkpoint_dir = args.checkpoint_dir if args.checkpoint_dir is not None else "checkpoints_mlp"
+        save_checkpoints = args.save_checkpoints
         mlp_model = MLP(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -37,12 +49,16 @@ def main():
         pipeline = MLPPipeline(
             mlp_model,
             repr_type="mfcc",
-            repr_n_mels=input_size,
+            repr_n_mels=repr_n_mels,
             device=device,
             max_samples=max_samples,
+            checkpoint_dir=checkpoint_dir,
+            save_checkpoints=save_checkpoints,
+            hidden_size=hidden_size,
+            n_layers=n_layers,
         )
         print("Starting MLP pipeline...")
-        pipeline.launch_pipeline()
+        pipeline.launch_pipeline(epochs=epochs, lr=lr, checkpoint_dir=checkpoint_dir)
     else:
         print(f"Model chosen CNN on device {device}")
         input_channels = 1
