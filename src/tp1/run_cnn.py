@@ -58,6 +58,12 @@ def main():
         default="BI-LSTM",
         help="Model that will be plugged to the Convolutions",
     )
+    parser.add_argument(
+        "--checkpoint_dir",
+        type=str,
+        default="checkpoints_cnn",
+        help="Folder where checkpoints are saved",
+    )
 
     args = parser.parse_args()
 
@@ -122,6 +128,7 @@ def main():
             lr=args.lr,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
+            checkpoint_dir=args.checkpoint_dir,
         )
 
     benchmarker = PipelineBenchmarker(training_fn)

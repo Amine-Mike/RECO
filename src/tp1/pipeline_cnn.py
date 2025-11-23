@@ -376,6 +376,19 @@ class CNNPipeline:
 
             if (epoch + 1) % 10 == 0:
                 checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+                # Save additional meta info so we can detect model type later
+                lstm = getattr(self.model, "lstm", None)
+                model_type = (
+                    lstm.__class__.__name__
+                    if lstm is not None
+                    else self.model.__class__.__name__
+                )
+                bidir = (
+                    getattr(lstm, "bidirectional", False) if lstm is not None else False
+                )
+                hidden = (
+                    getattr(lstm, "hidden_size", None) if lstm is not None else None
+                )
                 torch.save(
                     {
                         "epoch": epoch,
@@ -383,6 +396,9 @@ class CNNPipeline:
                         "optimizer_state_dict": opt.state_dict(),
                         "train_loss": avg_train_loss,
                         "val_loss": avg_val_loss,
+                        "model_type": ("BI-" + model_type if bidir else model_type),
+                        "hidden_size": hidden,
+                        "repr_n_mels": self.repr_n_mels,
                     },
                     checkpoint_path,
                 )
