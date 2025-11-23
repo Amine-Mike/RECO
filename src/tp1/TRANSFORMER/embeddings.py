@@ -93,5 +93,5 @@ class SpeechFeatureEmbedding(nn.Module):
         positions = torch.arange(seq_len, device=x.device)
         pos_emb = self.pos_emb(positions)
 
-        # Again I will scale by the std
+        # Again scale by the std
         return x * (self.num_hid**0.5) + pos_emb

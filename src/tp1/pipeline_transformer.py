@@ -222,7 +222,6 @@ def create_dataloaders(
     Returns:
         train_loader, val_loader
     """
-    # Split data
     split_idx = int(len(data) * train_split)
     train_data = data[:split_idx]
     val_data = data[split_idx:]
@@ -230,20 +229,16 @@ def create_dataloaders(
     print(f"Training samples: {len(train_data)}")
     print(f"Validation samples: {len(val_data)}")
 
-    # Extract paths and texts
     train_paths = [d["audio"] for d in train_data]
     train_texts = [d["text"] for d in train_data]
     val_paths = [d["audio"] for d in val_data]
     val_texts = [d["text"] for d in val_data]
 
-    # Create datasets
     train_dataset = TransformerDataset(train_paths, train_texts, vectorizer, pad_len)
     val_dataset = TransformerDataset(val_paths, val_texts, vectorizer, pad_len)
 
-    # Check if pin_memory should be used (not supported on MPS)
     use_pin_memory = torch.cuda.is_available()
 
-    # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -344,16 +339,13 @@ def display_predictions(
         source = batch["source"].to(device)
         target = batch["target"].cpu().numpy()
 
-        # Generate predictions
         preds = model.generate(source, target_start_token_idx)
         preds = preds.cpu().numpy()
 
         print("\n" + "=" * 80)
         for i in range(min(num_samples, len(target))):
-            # Decode target
             target_text = vectorizer.decode(target[i])
 
-            # Decode prediction
             prediction = ""
             for idx in preds[i]:
                 if idx == target_end_token_idx:
@@ -502,9 +494,8 @@ def train_transformer(
                 },
                 checkpoint_path,
             )
-            print(f"✓ Saved best model to {checkpoint_path}")
+            print(f"Saved best model to {checkpoint_path}")
 
-        # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
             checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
             torch.save(

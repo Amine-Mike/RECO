@@ -1,17 +1,16 @@
+import warnings
 from pathlib import Path
 from typing import Optional
-import warnings
 
-from torchaudio import transforms
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 import torch.nn.functional as F
 import torchaudio
-
-from MLP.model import MLP
 from CNN.model import CNN
 from MLP.data import Data
+from MLP.model import MLP
+from torchaudio import transforms
 
 warnings.filterwarnings(
     "ignore", message="In 2.9, this function's implementation will be changed"
@@ -130,8 +129,6 @@ class Pipeline:
                 seq, (0, pad_size), mode="constant", value=0
             )
 
-        # self._input_size = max_length
-
     def visualize_data(self, spectorgram: torch.Tensor):
         plt.figure(figsize=(8, 5))
         plt.imshow(
@@ -153,7 +150,6 @@ class Pipeline:
         # output shape: [Time, 1, Classes] -> squeeze to [Time, Classes]
         output = output.squeeze(1)
 
-        # Get the index of the highest probability character at each step
         arg_maxes = torch.argmax(output, dim=1)
 
         decoded_str = []
@@ -262,11 +258,9 @@ class Pipeline:
                 first_key = next(iter(self.s_rpr))
                 print("Sanity check inference on sample:", first_key)
                 sample_wav = self.s_rpr[first_key].rpr.to(self.device)
-                # run the model in eval and without grad
                 self.model.eval()
                 with torch.no_grad():
                     preds_check = self.model(sample_wav)
-                    # Move to CPU for decoding
                     transcript_check = self.decode_prediction(preds_check.cpu())
                 print("  Inferred (sanity):", transcript_check)
                 self.model.train()
@@ -285,8 +279,6 @@ class Pipeline:
             raise ValueError(
                 "Error while filling the rprs, make sure that the given path contains .wav files"
             )
-
-        # self.visualize_data(list(self.s_rpr.values())[0].rpr)
 
         self.train_model()
 
