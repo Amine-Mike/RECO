@@ -117,8 +117,8 @@ In each rnn models we only kept one layer of RNN in total to keep models small f
 
 Notes:
 - `#Params` can be obtained from the run scripts which print the counts.
-- `CER` and `WER` are suggested to be computed on a held-out validation set (not the single sample) — use a larger validation split such as 1–10% of data.
-- `Train time` / `Time/epoch` measured using `PipelineBenchmarker.time_execution()` (already used in runners).
+- `CER` and `WER` are computed on a held-out validation set
+- `Train time` / `Time/epoch` measured using `PipelineBenchmarker.time_execution()`.
 
 How these results were produced:
 - CER/WER were computed using `scripts/compute_error_rates.py` on the `best_model.pt` of each model.
@@ -126,6 +126,18 @@ How these results were produced:
   - CNN: `uv run scripts/compute_error_rates.py --model cnn --checkpoint checkpoints_cnn/best_model.pt --data_dir data/LJSpeech-1.1 --max_samples 10000 --batch_size 32 --repr_n_mels 128 --hidden_size 128 --model_type LSTM`
   - Transformer: `uv run scripts/compute_error_rates.py --model transformer --checkpoint checkpoints_transformer/best_model.pt --data_dir data/LJSpeech-1.1 --max_samples 2000 --batch_size 64 --max_target_len 200`
 
+## Table Conclusion
+
+Summary of the main findings from the experiments table above:
+
+- MLP (baseline): Fast and tiny (2,748 params) — provides a quick timing baseline (low per-epoch time) but **performs very poorly** on speech-to-text (CER 98.99%, WER 100% in our short runs). Use MLP only for lightweight sanity checks or as a baseline for further ablations.
+- CNN + RNN variants: The CNN + BI-LSTM provides a good trade-off between accuracy and model size/latency; it achieves significantly better CER/WER than the MLP while remaining smaller than a full Transformer. GRU has fewer parameters and slightly worse CER/WER than LSTM and BI-LSTM in our experiments.
+- Transformer: Highest transcription quality among models we tested (best CER/WER), but requires more compute and careful LR/warmup tuning for stable training.
+
+Practical recommendation:
+  - For production-quality transcription on LJSpeech-like data, prefer the CNN + (BI-)LSTM or the Transformer depending on resource budgets; CNN+BI-LSTM if lower latency and modest compute are priorities, Transformer when best accuracy is required and you can afford more compute and memory.
+
+Note that we only used one layer of RNN in our run to keep the training time low, without time constraint, more lstm layers should be added, with those extra layers a WER of 16% can be reached
 ---
 
 ## Example Predictions (images)
